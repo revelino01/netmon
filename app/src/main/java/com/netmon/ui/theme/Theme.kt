@@ -7,6 +7,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
+private val Purple80 = Color(0xFFBB86FC)
+private val PurpleGrey80 = Color(0xFFCCC2DC)
+private val Pink80 = Color(0xFFEFB8C8)
+private val Purple40 = Color(0xFF6200EE)
+private val PurpleGrey40 = Color(0xFF625B71)
+private val Pink40 = Color(0xFF7D5260)
+
 private val DarkColorScheme = darkColorScheme(
     primary = Purple80,
     secondary = PurpleGrey80,
@@ -40,10 +47,3 @@ fun NetMonTheme(
         content = content
     )
 }
-
-val Purple80 = Color(0xFFBB86FC)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
-val Purple40 = Color(0xFF6200EE)
-val PurpleGrey40 = Color(0xFF625B71)
-val Pink40 = Color(0xFF7D5260)
