@@ -13,9 +13,11 @@ object PacketParser {
     private const val DNS_PORT = 53
 
     fun parse(buffer: ByteBuffer, length: Int): ParsedPacket? {
-        if (length < 20) return null // minimum IPv4 header
+        if (length < 20) return null
 
-        val version = (buffer.get(0).toInt() shr 4) and 0x0F
+        buffer.position(0)
+        val firstByte = buffer.get(0).toInt()
+        val version = (firstByte shr 4) and 0x0F
         return when (version) {
             4 -> parseIPv4(buffer, length)
             6 -> parseIPv6(buffer, length)
@@ -32,20 +34,14 @@ object PacketParser {
         val srcAddr = intToIp(buffer.getInt(12))
         val dstAddr = intToIp(buffer.getInt(16))
 
-        // Skip IP options if IHL > 20
-        buffer.position(ihl)
-
         return when (protocol) {
             PROTOCOL_TCP -> {
                 val srcPort = buffer.getShort(ihl).toInt() and 0xFFFF
                 val dstPort = buffer.getShort(ihl + 2).toInt() and 0xFFFF
                 ParsedPacket(
-                    protocol = PROTOCOL_TCP,
-                    srcAddr = srcAddr,
-                    srcPort = srcPort,
-                    dstAddr = dstAddr,
-                    dstPort = dstPort,
-                    payloadSize = totalLength - ihl - 20, // approx
+                    protocol = PROTOCOL_TCP, srcAddr = srcAddr, srcPort = srcPort,
+                    dstAddr = dstAddr, dstPort = dstPort,
+                    payloadSize = maxOf(0, totalLength - ihl - 20),
                     isDns = dstPort == DNS_PORT || srcPort == DNS_PORT,
                     dnsQuery = if (dstPort == DNS_PORT || srcPort == DNS_PORT) {
                         extractDnsQuery(buffer, ihl + 20, length)
@@ -57,12 +53,9 @@ object PacketParser {
                 val dstPort = buffer.getShort(ihl + 2).toInt() and 0xFFFF
                 val udpLen = buffer.getShort(ihl + 4).toInt() and 0xFFFF
                 ParsedPacket(
-                    protocol = PROTOCOL_UDP,
-                    srcAddr = srcAddr,
-                    srcPort = srcPort,
-                    dstAddr = dstAddr,
-                    dstPort = dstPort,
-                    payloadSize = udpLen - 8,
+                    protocol = PROTOCOL_UDP, srcAddr = srcAddr, srcPort = srcPort,
+                    dstAddr = dstAddr, dstPort = dstPort,
+                    payloadSize = maxOf(0, udpLen - 8),
                     isDns = dstPort == DNS_PORT || srcPort == DNS_PORT,
                     dnsQuery = if (dstPort == DNS_PORT || srcPort == DNS_PORT) {
                         extractDnsQuery(buffer, ihl + 8, length)
@@ -70,14 +63,10 @@ object PacketParser {
                 )
             }
             else -> ParsedPacket(
-                protocol = protocol,
-                srcAddr = srcAddr,
-                srcPort = 0,
-                dstAddr = dstAddr,
-                dstPort = 0,
-                payloadSize = totalLength - ihl,
-                isDns = false,
-                dnsQuery = null
+                protocol = protocol, srcAddr = srcAddr, srcPort = 0,
+                dstAddr = dstAddr, dstPort = 0,
+                payloadSize = maxOf(0, totalLength - ihl),
+                isDns = false, dnsQuery = null
             )
         }
     }
@@ -88,7 +77,6 @@ object PacketParser {
         val nextHeader = buffer.get(6).toInt() and 0xFF
         val payloadLength = buffer.getShort(4).toInt() and 0xFFFF
 
-        // IPv6 source/dest are 16 bytes each
         val srcBytes = ByteArray(16)
         buffer.position(8)
         buffer.get(srcBytes)
@@ -99,7 +87,6 @@ object PacketParser {
         buffer.get(dstBytes)
         val dstAddr = bytesToIPv6(dstBytes)
 
-        // Simplified: only parse TCP/UDP next headers at offset 40
         return when (nextHeader) {
             PROTOCOL_TCP -> {
                 val srcPort = buffer.getShort(40).toInt() and 0xFFFF
@@ -107,7 +94,7 @@ object PacketParser {
                 ParsedPacket(
                     protocol = PROTOCOL_TCP, srcAddr = srcAddr, srcPort = srcPort,
                     dstAddr = dstAddr, dstPort = dstPort,
-                    payloadSize = payloadLength - 20,
+                    payloadSize = maxOf(0, payloadLength - 20),
                     isDns = dstPort == DNS_PORT || srcPort == DNS_PORT,
                     dnsQuery = null
                 )
@@ -118,7 +105,7 @@ object PacketParser {
                 ParsedPacket(
                     protocol = PROTOCOL_UDP, srcAddr = srcAddr, srcPort = srcPort,
                     dstAddr = dstAddr, dstPort = dstPort,
-                    payloadSize = payloadLength - 8,
+                    payloadSize = maxOf(0, payloadLength - 8),
                     isDns = dstPort == DNS_PORT || srcPort == DNS_PORT,
                     dnsQuery = null
                 )
@@ -126,7 +113,7 @@ object PacketParser {
             else -> ParsedPacket(
                 protocol = nextHeader, srcAddr = srcAddr, srcPort = 0,
                 dstAddr = dstAddr, dstPort = 0,
-                payloadSize = payloadLength, isDns = false, dnsQuery = null
+                payloadSize = maxOf(0, payloadLength), isDns = false, dnsQuery = null
             )
         }
     }
@@ -134,7 +121,6 @@ object PacketParser {
     /** Extract DNS query name from a DNS message payload. */
     private fun extractDnsQuery(buffer: ByteBuffer, offset: Int, length: Int): String? {
         try {
-            // DNS header: 12 bytes, then question section
             if (offset + 12 >= length) return null
             val qdCount = buffer.getShort(offset + 4).toInt() and 0xFFFF
             if (qdCount == 0) return null
@@ -146,12 +132,13 @@ object PacketParser {
                 if (labelLen == 0) break
                 pos++
                 if (pos + labelLen > length) break
-                val label = ByteArray(labelLen)
-                buffer.position(pos)
-                buffer.get(label)
-                if (name.isNotEmpty()) name.append('.')
-                name.append(String(label))
+                for (i in 0 until labelLen) {
+                    name.append(buffer.get(pos + i).toInt().toChar())
+                }
                 pos += labelLen
+                if (pos < length && buffer.get(pos).toInt() and 0xFF != 0) {
+                    name.append('.')
+                }
             }
             return if (name.isNotEmpty()) name.toString() else null
         } catch (e: Exception) {
@@ -164,9 +151,13 @@ object PacketParser {
     }
 
     private fun bytesToIPv6(bytes: ByteArray): String {
-        return bytes.chunked(2).joinToString(":") {
-            "${((it[0].toInt() and 0xFF) shl 8 or (it[1].toInt() and 0xFF)).toString(16)}"
+        val parts = mutableListOf<String>()
+        for (i in bytes.indices step 2) {
+            val hi = (bytes[i].toInt() and 0xFF)
+            val lo = (bytes[i + 1].toInt() and 0xFF)
+            parts.add(String.format("%x", (hi shl 8) or lo))
         }
+        return parts.joinToString(":")
     }
 }
 

@@ -1,14 +1,12 @@
 package com.netmon.ui
 
 import android.app.Activity
-import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.netmon.domain.AppTrafficStats
 import com.netmon.domain.DashboardUiState
-import com.netmon.domain.PacketEvent
 import com.netmon.domain.TrafficRepository
 import com.netmon.vpn.VpnCaptureService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,14 +22,7 @@ class DashboardViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
-    private var activityRef: Activity? = null
-
-    fun setActivity(activity: Activity) {
-        activityRef = activity
-    }
-
     init {
-        // Observe live traffic from FlowTracker
         viewModelScope.launch {
             repository.observeLiveTraffic().collect { apps ->
                 _uiState.update { state ->
@@ -46,52 +37,50 @@ class DashboardViewModel @Inject constructor(
             }
         }
 
-        // Observe DNS queries
         viewModelScope.launch {
             repository.observeDnsQueries().collect { queries ->
                 _uiState.update { it.copy(dnsQueries = queries) }
             }
         }
+
+        // Periodic monitoring state refresh
+        viewModelScope.launch {
+            while (true) {
+                _uiState.update { it.copy(isMonitoring = VpnCaptureService.isRunning) }
+                kotlinx.coroutines.delay(1000)
+            }
+        }
     }
 
     fun toggleMonitoring() {
-        if (VpnCaptureService.isRunning) {
-            stopMonitoring()
-        } else {
-            startMonitoring()
-        }
+        // Activity must handle VPN permission via startMonitoringWithPermission()
     }
 
-    private fun startMonitoring() {
-        val activity = activityRef ?: return
-        val intent = VpnService.prepare(activity) ?: run {
-            // Already prepared, start directly
+    fun startMonitoring(activity: Activity) {
+        val intent = VpnService.prepare(activity)
+        if (intent != null) {
+            activity.startActivityForResult(intent, REQUEST_VPN_PERMISSION)
+        } else {
+            // Already prepared
             activity.startService(Intent(activity, VpnCaptureService::class.java))
             _uiState.update { it.copy(isMonitoring = true) }
-            return
         }
-        // Need VPN permission
-        activity.startActivityForResult(intent, REQUEST_VPN_PERMISSION)
     }
 
-    fun onVpnPermissionResult(resultCode: Int) {
+    fun onVpnPermissionResult(resultCode: Int, activity: Activity) {
         if (resultCode == Activity.RESULT_OK) {
-            activityRef?.let { activity ->
-                activity.startService(Intent(activity, VpnCaptureService::class.java))
-                _uiState.update { it.copy(isMonitoring = true) }
-            }
+            activity.startService(Intent(activity, VpnCaptureService::class.java))
+            _uiState.update { it.copy(isMonitoring = true) }
         } else {
             _uiState.update { it.copy(error = "VPN permission denied") }
         }
     }
 
-    private fun stopMonitoring() {
-        activityRef?.let { activity ->
-            val intent = Intent(activity, VpnCaptureService::class.java).apply {
-                action = "STOP"
-            }
-            activity.startService(intent)
+    fun stopMonitoring(activity: Activity) {
+        val intent = Intent(activity, VpnCaptureService::class.java).apply {
+            action = "STOP"
         }
+        activity.startService(intent)
         _uiState.update { it.copy(isMonitoring = false) }
     }
 

@@ -1,7 +1,10 @@
 package com.netmon.ui
 
+import android.app.Activity
 import android.content.Intent
 import android.net.VpnService
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,7 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.netmon.domain.AppTrafficStats
@@ -22,13 +25,34 @@ import com.netmon.vpn.VpnCaptureService
 @Composable
 fun DashboardScreen(viewModel: DashboardViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val activity = context as? Activity
+
+    val vpnLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        activity?.let { viewModel.onVpnPermissionResult(result.resultCode, it) }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("NetMon") },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleMonitoring() }) {
+                    IconButton(onClick = {
+                        activity?.let { act ->
+                            if (VpnCaptureService.isRunning) {
+                                viewModel.stopMonitoring(act)
+                            } else {
+                                val intent = VpnService.prepare(act)
+                                if (intent != null) {
+                                    vpnLauncher.launch(intent)
+                                } else {
+                                    viewModel.startMonitoring(act)
+                                }
+                            }
+                        }
+                    }) {
                         Icon(
                             if (state.isMonitoring) Icons.Default.Stop else Icons.Default.PlayArrow,
                             contentDescription = if (state.isMonitoring) "Stop" else "Start"
@@ -47,12 +71,9 @@ fun DashboardScreen(viewModel: DashboardViewModel = hiltViewModel()) {
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            // Summary cards
             SummaryCards(state)
-
             Spacer(Modifier.height(16.dp))
 
-            // Per-app traffic list
             if (state.apps.isEmpty() && state.isMonitoring) {
                 Box(
                     modifier = Modifier.fillMaxSize(),

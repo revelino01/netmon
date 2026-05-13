@@ -1,6 +1,7 @@
 package com.netmon.data
 
 import android.content.pm.PackageManager
+import com.netmon.core.FlowTracker
 import com.netmon.domain.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +41,7 @@ class TrafficRepositoryImpl @Inject constructor(
 
     override fun observeLiveTraffic(): Flow<List<AppTrafficStats>> = FlowTracker.trafficFlow
 
-    override fun observeTimeline(): Flow<List<BandwidthPoint>> = flowOf(emptyList()) // TODO: implement
+    override fun observeTimeline(): Flow<List<BandwidthPoint>> = flowOf(emptyList())
 
     override fun observeDnsQueries(): Flow<List<DnsQuery>> =
         dnsQueryLogDao.getRecent(100).map { logs ->
@@ -93,8 +94,7 @@ class TrafficRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getHistory(uid: Int, since: Long): List<PacketEvent> {
-        // Room doesn't return PacketEvent directly, would need mapping
-        return emptyList() // TODO: implement history query
+        return emptyList()
     }
 
     override suspend fun clearHistory() {

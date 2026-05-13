@@ -97,16 +97,17 @@ class VpnCaptureService : VpnService() {
     private suspend fun readLoop() {
         val fd = vpnInterface?.fileDescriptor ?: return
         val input = FileInputStream(fd)
+        val rawBuffer = ByteArray(MAX_PACKET_SIZE)
         val buffer = ByteBuffer.allocateDirect(MAX_PACKET_SIZE)
 
         try {
-            while (coroutineContext.isActive && !isStopping) {
-                buffer.clear()
-                val bytesRead = withContext(Dispatchers.IO) { input.read(buffer.array()) }
+            while (scope.coroutineContext[Job]?.isActive == true && !isStopping) {
+                val bytesRead = withContext(Dispatchers.IO) { input.read(rawBuffer) }
                 if (bytesRead <= 0) continue
 
-                buffer.position(0)
-                buffer.limit(bytesRead)
+                buffer.clear()
+                buffer.put(rawBuffer, 0, bytesRead)
+                buffer.flip()
 
                 val parsed = PacketParser.parse(buffer, bytesRead) ?: continue
 
