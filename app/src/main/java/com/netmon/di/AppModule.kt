@@ -1,6 +1,7 @@
 package com.netmon.di
 
 import android.content.Context
+import android.content.pm.PackageManager
 import androidx.room.Room
 import com.netmon.data.AppDatabase
 import com.netmon.data.TrafficLogDao
@@ -17,6 +18,11 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+
+    @Provides
+    @Singleton
+    fun providePackageManager(@ApplicationContext context: Context): PackageManager =
+        context.packageManager
 
     @Provides
     @Singleton
