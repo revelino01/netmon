@@ -3,6 +3,7 @@ name: Build Release APK
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -28,13 +29,19 @@ jobs:
         id: version
         run: |
           BUILD_NUMBER=$GITHUB_RUN_NUMBER
-          # Use git tag if on a tag, otherwise describe
-          GIT_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
-          # Strip leading 'v' if present
-          GIT_VERSION=${GIT_VERSION#v}
-          VERSION_NAME="${GIT_VERSION}.${BUILD_NUMBER}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            # Tag push: use the tag as version name
+            GIT_VERSION="${GITHUB_REF#refs/tags/v}"
+            VERSION_NAME="$GIT_VERSION"
+          else
+            # Branch push: use git describe + build number
+            GIT_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+            GIT_VERSION=${GIT_VERSION#v}
+            VERSION_NAME="${GIT_VERSION}.${BUILD_NUMBER}"
+          fi
           echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
           echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "is_tag=${{ startsWith(github.ref, 'refs/tags/v') }}" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION_NAME (code: $BUILD_NUMBER)"
 
       - name: Generate Gradle wrapper
@@ -48,12 +55,11 @@ jobs:
           VERSION_CODE: ${{ steps.version.outputs.build_number }}
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
         run: |
-          # Patch version into build.gradle.kts
           sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" app/build.gradle.kts
           sed -i "s/versionName = .*/versionName = \"$VERSION_NAME\"/" app/build.gradle.kts
           ./gradlew assembleRelease
 
-      - name: Rename and upload release APK
+      - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: netmon-release-${{ steps.version.outputs.version_name }}
@@ -68,8 +74,43 @@ jobs:
           sed -i "s/versionName = .*/versionName = \"$VERSION_NAME\"/" app/build.gradle.kts
           ./gradlew assembleDebug
 
-      - name: Rename and upload debug APK
+      - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: netmon-debug-${{ steps.version.outputs.version_name }}
           path: app/build/outputs/apk/debug/*.apk
+
+      # ── GitHub Releases ──────────────────────────────────────────
+      # On every main push: create/update a "latest" pre-release
+      # On tag push (v*): create a tagged stable release
+
+      - name: Create/update latest pre-release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: NetMon ${{ steps.version.outputs.version_name }} (latest)
+          body: |
+            **Build #${{ steps.version.outputs.build_number }}** from `${{ github.sha }}`
+
+            • `netmon-release-${{ steps.version.outputs.version_name }}.apk` — signed release build
+            • `netmon-debug-${{ steps.version.outputs.version_name }}.apk` — debug build
+          prerelease: true
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+
+      - name: Create tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: NetMon ${{ steps.version.outputs.version_name }}
+          body: |
+            **Release ${{ steps.version.outputs.version_name }}**
+
+            • `netmon-release-${{ steps.version.outputs.version_name }}.apk` — signed release build
+            • `netmon-debug-${{ steps.version.outputs.version_name }}.apk` — debug build
+          prerelease: false
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
